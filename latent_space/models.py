@@ -54,3 +54,34 @@ class InverseModel(nn.Module):
         action_logits = self.network(combined_z)
         return action_logits
 
+class ForwardModel(nn.Module):
+    def __init__(self, latent_dim: int = 16, num_actions: int = 5, hidden_dim: int = 256):
+        """
+        Docstring for __init__
+        
+        Predicts zt1 from zt and action
+        """
+        super().__init__()
+        self.input_dim = latent_dim + num_actions
+        self.latent_dim = latent_dim
+        self.network = nn.Sequential(
+            nn.Linear(self.input_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLu(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLu(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLu(),
+            nn.Linear(hidden_dim, self.latent_dim) 
+        )
+
+    def forward(self, z_t: torch.Tensor, a_t:torch.Tensor) -> torch.Tensor:
+        combined_tensor = torch.cat((z_t, a_t), dim = 1)
+        z_t1 = self.network(combined_tensor)
+        return z_t1
+    
+
+
+        
