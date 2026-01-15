@@ -73,7 +73,7 @@ class ForwardModel(nn.Module):
             nn.ReLu(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
-            nn.ReLu(),
+            
             nn.Linear(hidden_dim, self.latent_dim) 
         )
 
