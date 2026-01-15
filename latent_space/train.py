@@ -14,7 +14,8 @@ BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
 from data import create_dataloader  # noqa: E402
-from models import Encoder, InverseModel  # noqa: E402
+from models import Encoder, InverseModel, ForwardModel  # noqa: E402
+from losses import MarginLoss
 
 # -- Hyperparameters --
 LATENT_DIM = 16
@@ -24,7 +25,6 @@ BATCH_SIZE = 64
 NUM_EPOCHS = 2
 EXPERIENCE_PATH = BASE_DIR / "iceslider_experience.pkl"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
 
 def train(
     experience_path: str = EXPERIENCE_PATH,
@@ -38,14 +38,14 @@ def train(
     # 1. Initialize models
     encoder = Encoder(latent_dim=LATENT_DIM).to(DEVICE)
     inverse_model = InverseModel(latent_dim=LATENT_DIM, num_actions=NUM_ACTIONS).to(DEVICE)
-
+    forward_model = ForwardModel(latent_dim=LATENT_DIM, num_actions=NUM_ACTIONS).to(DEVICE)
     # 2. Create DataLoader
     dataloader = create_dataloader(experience_path=experience_path, batch_size=batch_size)
 
     # 3. Define Loss and Optimizer
-    params_to_optimize = list(encoder.parameters()) + list(inverse_model.parameters())
+    params_to_optimize = list(encoder.parameters()) + list(inverse_model.parameters() + list(forward_model.parameters()))
     optimizer = optim.Adam(params_to_optimize, lr=learning_rate)
-    criterion = nn.CrossEntropyLoss()
+    # criterion = nn.CrossEntropyLoss()
 
     # 4. Training Loop
     print("Starting training...")
@@ -60,7 +60,8 @@ def train(
             z_t1 = encoder(s_t1)
 
             predicted_action_logits = inverse_model(z_t, z_t1)
-            loss = criterion(predicted_action_logits, a_t)
+            predicted_latent_state = forward_model(z_t, a_t)
+            loss = nn.CrossEntropyLoss(predicted_action_logits, a_t) + nn.MSELoss(predicted_latent_state, z_t1) + MarginLoss(z_t, z_t1)
 
             loss.backward()
             optimizer.step()
