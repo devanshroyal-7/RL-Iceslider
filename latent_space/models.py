@@ -64,13 +64,14 @@ class ForwardModel(nn.Module):
         super().__init__()
         self.input_dim = latent_dim + num_actions
         self.latent_dim = latent_dim
+        self.num_actions = num_actions
         self.network = nn.Sequential(
             nn.Linear(self.input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
-            nn.ReLu(),
+            nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
-            nn.ReLu(),
+            nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             
@@ -78,7 +79,8 @@ class ForwardModel(nn.Module):
         )
 
     def forward(self, z_t: torch.Tensor, a_t:torch.Tensor) -> torch.Tensor:
-        combined_tensor = torch.cat((z_t, a_t), dim = 1)
+        a_t_one_hot = nn.functional.one_hot(a_t, num_classes=self.num_actions).float()
+        combined_tensor = torch.cat((z_t, a_t_one_hot), dim = 1)
         z_t1 = self.network(combined_tensor)
         return z_t1
     

@@ -31,8 +31,11 @@ def select_next_best_action(action_probs: torch.Tensor, visited_actions: Set[int
     """
     Select the highest-probability action not yet tried in this latent state.
     """
+    print(action_probs)
     probs = action_probs.cpu().numpy().flatten()
+    print(probs)
     sorted_actions = np.argsort(probs)[::-1]
+    print(sorted_actions)
     for a in sorted_actions:
         if int(a) not in visited_actions:
             return int(a)
@@ -120,6 +123,7 @@ def run_latent_policy(
                 visited_actions = tracker.get_visited_actions(latent_vector) if tracking_started else set()
 
                 action, _ = model.predict(obs, deterministic=True)
+                # print(action)
                 best_action = int(action[0])
 
                 if tracking_started and best_action in visited_actions:
@@ -127,6 +131,7 @@ def run_latent_policy(
                         obs_tensor = torch.as_tensor(obs, device=device)
                         dist = model.policy.get_distribution(obs_tensor)
                         action_probs = dist.distribution.probs
+                        print(action_probs)
                     action_to_take = select_next_best_action(action_probs, visited_actions)
                     ep_next_best += 1
 

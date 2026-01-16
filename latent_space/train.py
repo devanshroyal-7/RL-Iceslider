@@ -22,7 +22,7 @@ LATENT_DIM = 16
 NUM_ACTIONS = 5
 LEARNING_RATE = 1e-4
 BATCH_SIZE = 64
-NUM_EPOCHS = 2
+NUM_EPOCHS = 10
 EXPERIENCE_PATH = BASE_DIR / "iceslider_experience.pkl"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -39,13 +39,16 @@ def train(
     encoder = Encoder(latent_dim=LATENT_DIM).to(DEVICE)
     inverse_model = InverseModel(latent_dim=LATENT_DIM, num_actions=NUM_ACTIONS).to(DEVICE)
     forward_model = ForwardModel(latent_dim=LATENT_DIM, num_actions=NUM_ACTIONS).to(DEVICE)
+    
     # 2. Create DataLoader
     dataloader = create_dataloader(experience_path=experience_path, batch_size=batch_size)
 
     # 3. Define Loss and Optimizer
-    params_to_optimize = list(encoder.parameters()) + list(inverse_model.parameters() + list(forward_model.parameters()))
+    params_to_optimize = list(encoder.parameters()) + list(inverse_model.parameters()) + list(forward_model.parameters())
     optimizer = optim.Adam(params_to_optimize, lr=learning_rate)
-    # criterion = nn.CrossEntropyLoss()
+    criterion_inverse= nn.CrossEntropyLoss()
+    criterion_forward = nn.MSELoss()
+    criterion_margin = MarginLoss()
 
     # 4. Training Loop
     print("Starting training...")
@@ -61,7 +64,12 @@ def train(
 
             predicted_action_logits = inverse_model(z_t, z_t1)
             predicted_latent_state = forward_model(z_t, a_t)
-            loss = nn.CrossEntropyLoss(predicted_action_logits, a_t) + nn.MSELoss(predicted_latent_state, z_t1) + MarginLoss(z_t, z_t1)
+
+            loss_inverse = criterion_inverse(predicted_action_logits, a_t)
+            loss_forward = criterion_forward(predicted_latent_state, z_t1)
+            loss_margin = criterion_margin(z_t, z_t1)
+
+            loss = loss_inverse + loss_forward + loss_margin
 
             loss.backward()
             optimizer.step()
@@ -69,7 +77,7 @@ def train(
             total_loss += loss.item()
 
             if (i + 1) % 100 == 0:
-                print(f"Epoch [{epoch+1}/{num_epochs}], Step [{i+1}/{len(dataloader)}], Loss: {loss.item():.4f}")
+                print(f"Epoch [{epoch+1}/{num_epochs}], Step [{i+1}/{len(dataloader)}], Loss: {loss.item():.4f}, Inverse Loss: {loss_inverse.item():.4f}, Forward Loss: {loss_forward.item():.4f}, Margin Loss: {loss_margin.item():.4f}")
 
         avg_loss = total_loss / len(dataloader)
         print(f"--- End of Epoch [{epoch+1}/{num_epochs}], Average Loss: {avg_loss:.4f} ---")
