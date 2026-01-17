@@ -55,7 +55,7 @@ def prepare_encoder_input(obs: np.ndarray) -> torch.Tensor:
 
 
 def run_latent_policy(
-    policy_path: str = str(PROJECT_ROOT / "agent" / "checkpoints_2" / "ppo_iceslider_interrupted.zip"),
+    policy_path: str = str(PROJECT_ROOT / "agent" / "ppo_iceslider_main.zip"),
     encoder_path: str = str(BASE_DIR / "encoder_model_grayscale.pth"),
     num_episodes: int = 5,
     render: bool = False,
@@ -175,7 +175,7 @@ def main():
     parser.add_argument(
         "--policy",
         type=str,
-        default=str(PROJECT_ROOT / "agent" / "checkpoints_2" / "ppo_iceslider_interrupted.zip")
+        default=str(PROJECT_ROOT / "agent" / "ppo_iceslider_main.zip")
     )
     parser.add_argument(
         "--encoder",
