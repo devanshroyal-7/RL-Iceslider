@@ -95,7 +95,8 @@ class TimePenaltyWrapper(gym.Wrapper):
 
 def make_iceslider_env(
     rank: int, 
-    n_seeds: int = 1000, 
+    n_seeds: int = 1000,
+    start_seed: int = 0,
     max_steps: int = 64,  # <-- NEW: Hard limit
     render_style: str = "grid_world"
 ):
@@ -105,8 +106,8 @@ def make_iceslider_env(
         # 1. Force the strict time limit FIRST
         env = gym.wrappers.TimeLimit(env, max_episode_steps=max_steps)
         
-        # 2. Constrain to 1000 training seeds
-        env = FixedSeedSampler(env, n_seeds=n_seeds, start_seed=0)
+        # 2. Constrain to specified seed range
+        env = FixedSeedSampler(env, n_seeds=n_seeds, start_seed=start_seed)
         
         # 3. Apply our custom reward logic (Step Penalty)
         env = TimePenaltyWrapper(env)
@@ -120,11 +121,12 @@ def make_iceslider_env(
 def make_vec_iceslider_env(
     num_envs: int = 64,
     n_seeds: int = 1000, # Train on 1000 levels only
+    start_seed: int = 0,
     use_subproc: bool = True,
     render_style: str = "grid_world",
 ):
     env_fns = [
-        make_iceslider_env(rank=i, n_seeds=n_seeds, max_steps=64, render_style=render_style) 
+        make_iceslider_env(rank=i, n_seeds=n_seeds, start_seed=start_seed, max_steps=64, render_style=render_style) 
         for i in range(num_envs)
     ]
     
