@@ -1,8 +1,10 @@
 import argparse
 import sys
+import time
 from pathlib import Path
 from typing import Set
 
+import cv2
 import numpy as np
 import torch
 from stable_baselines3 import PPO
@@ -16,14 +18,16 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from agent.wrappers import make_iceslider_env  # noqa: E402
 import ppo_model  # noqa: F401,E402
-from latent_action_tracker import LatentStateTracker  # noqa: E402
+from latent_action_tracker_2 import LatentStateTracker  # noqa: E402
 from models import Encoder  # noqa: E402
+
+ACTION_NAMES = ["UP", "RIGHT", "LEFT", "DOWN", "NOOP"]
+NUM_ACTIONS = len(ACTION_NAMES)
 
 
 def get_action_name(action: int) -> str:
-    names = ["UP", "RIGHT", "LEFT", "DOWN", "NOOP"]
-    if 0 <= action < len(names):
-        return names[action]
+    if 0 <= action < len(ACTION_NAMES):
+        return ACTION_NAMES[action]
     return f"UNKNOWN({action})"
 
 
@@ -31,11 +35,11 @@ def select_next_best_action(action_probs: torch.Tensor, visited_actions: Set[int
     """
     Select the highest-probability action not yet tried in this latent state.
     """
-    print(action_probs)
+    #print(action_probs)
     probs = action_probs.cpu().numpy().flatten()
-    print(probs)
+    # print(probs)
     sorted_actions = np.argsort(probs)[::-1]
-    print(sorted_actions)
+    # print(sorted_actions)
     for a in sorted_actions:
         if int(a) not in visited_actions:
             return int(a)
@@ -52,6 +56,48 @@ def prepare_encoder_input(obs: np.ndarray) -> torch.Tensor:
     frame_tensor = frame_tensor / 255.0
     frame_tensor = (frame_tensor - 0.5) / 0.5
     return frame_tensor
+
+def maybe_render(vec_env, delay: float = 0.2, scale: int = 8):
+    """Render the unwrapped IceSlider environment with delay and scaling."""
+    # Unwrap through VecEnv wrappers to get to the base environment
+    base_vec = vec_env
+    while hasattr(base_vec, 'venv') or hasattr(base_vec, 'env'):
+        if hasattr(base_vec, 'venv'):
+            base_vec = base_vec.venv
+        elif hasattr(base_vec, 'env'):
+            base_vec = base_vec.env
+        else:
+            break
+    
+    # Get the first environment from the VecEnv
+    if hasattr(base_vec, 'envs') and len(base_vec.envs) > 0:
+        base_env = base_vec.envs[0]
+        # Unwrap through gym wrappers to get to the base IceSlider
+        unwrapped_env = base_env
+        # Keep unwrapping until we find the IceSlider (it has _get_image method)
+        while hasattr(unwrapped_env, 'env'):
+            # Check if current level is IceSlider
+            if hasattr(unwrapped_env, '_get_image'):
+                break
+            unwrapped_env = unwrapped_env.env
+        
+        # Try to get the image directly from the base IceSlider
+        frame = None
+        if hasattr(unwrapped_env, '_get_image'):
+            # Call _get_image directly to bypass any wrapper render() methods
+            frame = unwrapped_env._get_image()
+        elif hasattr(unwrapped_env, 'render'):
+            frame = unwrapped_env.render()
+        
+        if frame is not None:
+            # Frame is RGB; convert to BGR for OpenCV display
+            bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            # Make it bigger by scaling (scale=8 means 8x bigger, so 64x64 becomes 512x512)
+            height, width = bgr.shape[:2]
+            bigger = cv2.resize(bgr, (width * scale, height * scale), interpolation=cv2.INTER_NEAREST)
+            cv2.imshow("IceSlider", bigger)
+            cv2.waitKey(1)  # Small wait for window update
+            time.sleep(delay)  # Delay between frames
 
 
 def run_latent_policy(
@@ -99,6 +145,8 @@ def run_latent_policy(
 
     episode_rewards = []
     total_next_best_actions = 0
+    num_successful_eps = 0
+    num_succ_w_latent = 0
 
     try:
         for ep in range(num_episodes):
@@ -109,7 +157,7 @@ def run_latent_policy(
             ep_reward = 0.0
             ep_next_best = 0
             tracking_started = False
-
+            
             print(f"\nEpisode {ep + 1}/{num_episodes}")
 
             while not done and step < 10000:
@@ -122,7 +170,7 @@ def run_latent_policy(
 
                 visited_actions = tracker.get_visited_actions(latent_vector) if tracking_started else set()
 
-                action, _ = model.predict(obs, deterministic=True)
+                action, _ = model.predict(obs, deterministic=False)
                 # print(action)
                 best_action = int(action[0])
 
@@ -131,11 +179,11 @@ def run_latent_policy(
                         obs_tensor = torch.as_tensor(obs, device=device)
                         dist = model.policy.get_distribution(obs_tensor)
                         action_probs = dist.distribution.probs
-                        print(action_probs)
+                        # print(action_probs)
                     action_to_take = select_next_best_action(action_probs, visited_actions)
                     ep_next_best += 1
 
-                    latent_key = tracker.get_latent_key(latent_vector)
+                    # latent_key = tracker.get_latent_key(latent_vector)
                     prev_actions = ", ".join(get_action_name(a) for a in sorted(visited_actions))
                     print(f"[LATENT LOOP] taken={prev_actions}, "
                           f"policy={get_action_name(best_action)}, switching={get_action_name(action_to_take)}")
@@ -147,13 +195,17 @@ def run_latent_policy(
 
                 obs, rewards, dones, infos = vec_env.step([action_to_take])
                 done = bool(dones[0])
+                if rewards == [10.]:
+                    num_successful_eps += 1 
+                if rewards == [10.] and ep_next_best > 0:
+                    num_succ_w_latent += 1
                 ep_reward += float(rewards[0])
                 step += 1
 
                 if render:
                     # VecTransposeImage already provides image-aligned observation;
                     # relying on vec_env.render may be slow but is optional.
-                    vec_env.render()
+                    maybe_render(vec_env, delay=0.2, scale=8)
 
             episode_rewards.append(ep_reward)
             total_next_best_actions += ep_next_best
@@ -162,11 +214,14 @@ def run_latent_policy(
 
     finally:
         vec_env.close()
+        if render:
+            cv2.destroyAllWindows()
 
     avg_reward = float(np.mean(episode_rewards)) if episode_rewards else 0.0
     print(f"\nEvaluation complete: avg reward {avg_reward:.2f} over {num_episodes} episodes")
     print(f"Total next-best actions: {total_next_best_actions} "
-          f"(avg {total_next_best_actions/num_episodes if num_episodes else 0:.2f}/episode)")
+          f"(avg {total_next_best_actions/num_episodes if num_episodes else 0:.2f}/episode)\n"
+          f"Number of successful episodes: {num_successful_eps} / {num_episodes} with {num_succ_w_latent} using RTHS")
     return episode_rewards
 
 
