@@ -1,14 +1,16 @@
 import argparse
 import sys
 import time
+import random
 from pathlib import Path
-from typing import Set
+from typing import Optional, Set, Tuple
 
 import cv2
 import numpy as np
 import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecTransposeImage
+import pdb
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
@@ -31,19 +33,20 @@ def get_action_name(action: int) -> str:
     return f"UNKNOWN({action})"
 
 
-def select_next_best_action(action_probs: torch.Tensor, visited_actions: Set[int]) -> int:
+def select_next_best_action(action_probs: torch.Tensor, visited_actions: Set[int], action_count: list[int]) -> int:
     """
     Select the highest-probability action not yet tried in this latent state.
     """
-    #print(action_probs)
     probs = action_probs.cpu().numpy().flatten()
-    # print(probs)
     sorted_actions = np.argsort(probs)[::-1]
-    # print(sorted_actions)
-    for a in sorted_actions:
-        if int(a) not in visited_actions:
-            return int(a)
-    return int(sorted_actions[0])
+    # for a in sorted_actions:
+    #     if int(a) not in visited_actions:
+    #         return int(a)
+    action_count = np.array(action_count)
+    sorted_action_count = action_count[sorted_actions]
+    # breakpoint()
+    return int(sorted_actions[np.argmin(sorted_action_count)])
+# Try np.max
 
 
 def prepare_encoder_input(obs: np.ndarray) -> torch.Tensor:
@@ -52,13 +55,22 @@ def prepare_encoder_input(obs: np.ndarray) -> torch.Tensor:
     obs shape: (1, 1, 84, 84) from VecTransposeImage (NCHW).
     """
     frame = obs[0, 0, :, :]
+    # print(frame.shape)
     frame_tensor = torch.from_numpy(frame).unsqueeze(0).unsqueeze(0).float()
     frame_tensor = frame_tensor / 255.0
     frame_tensor = (frame_tensor - 0.5) / 0.5
     return frame_tensor
 
-def maybe_render(vec_env, delay: float = 0.2, scale: int = 8):
-    """Render the unwrapped IceSlider environment with delay and scaling."""
+def maybe_render(
+    vec_env,
+    delay: float = 0.5,
+    scale: int = 8,
+    squirrel_xy: Optional[Tuple[int, int]] = None, 
+    sqrl_size: Optional[int] = None,
+):
+    """Render the unwrapped IceSlider environment with delay and scaling.
+    squirrel_xy: (x, y) in 84x84 obs space; if set, draw the squirrel on the frame.
+    """
     # Unwrap through VecEnv wrappers to get to the base environment
     base_vec = vec_env
     while hasattr(base_vec, 'venv') or hasattr(base_vec, 'env'):
@@ -68,7 +80,7 @@ def maybe_render(vec_env, delay: float = 0.2, scale: int = 8):
             base_vec = base_vec.env
         else:
             break
-    
+
     # Get the first environment from the VecEnv
     if hasattr(base_vec, 'envs') and len(base_vec.envs) > 0:
         base_env = base_vec.envs[0]
@@ -80,7 +92,7 @@ def maybe_render(vec_env, delay: float = 0.2, scale: int = 8):
             if hasattr(unwrapped_env, '_get_image'):
                 break
             unwrapped_env = unwrapped_env.env
-        
+
         # Try to get the image directly from the base IceSlider
         frame = None
         if hasattr(unwrapped_env, '_get_image'):
@@ -88,8 +100,18 @@ def maybe_render(vec_env, delay: float = 0.2, scale: int = 8):
             frame = unwrapped_env._get_image()
         elif hasattr(unwrapped_env, 'render'):
             frame = unwrapped_env.render()
-        
+
         if frame is not None:
+            # Draw squirrel on render if position given (obs is 84x84, render is 64x64)
+            if squirrel_xy is not None:
+                x84, y84 = squirrel_xy
+                x64 = int(x84 * 64 / 84)
+                y64 = int(y84 * 64 / 84)
+                # Clip to frame bounds
+                h, w = frame.shape[:2]
+                size64 = max(0, int(sqrl_size * 64 / 84))
+                cv2.rectangle(frame, (x64, y64), (x64+size64, y64+size64), (255, 200, 100), -1)
+
             # Frame is RGB; convert to BGR for OpenCV display
             bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             # Make it bigger by scaling (scale=8 means 8x bigger, so 64x64 becomes 512x512)
@@ -103,11 +125,12 @@ def maybe_render(vec_env, delay: float = 0.2, scale: int = 8):
 def run_latent_policy(
     policy_path: str = str(PROJECT_ROOT / "agent" / "ppo_iceslider_main.zip"),
     encoder_path: str = str(BASE_DIR / "encoder_model_grayscale.pth"),
+    sqrl_size: int = 0,
     num_episodes: int = 5,
     render: bool = False,
     start_tracking_step: int = 0,
     start_seed: int = 0,
-    n_seeds: int = 1000,
+    n_seeds: int | None = None,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -129,7 +152,10 @@ def run_latent_policy(
     encoder.load_state_dict(torch.load(encoder_path, map_location=device, weights_only=False))
     encoder.eval()
 
-    print(f"Using seed range: [{start_seed}, {start_seed + n_seeds})")
+    use_sequential_seeds = n_seeds is not None      # (1) bool
+    if use_sequential_seeds:
+        print(f"Using seed range: [{start_seed}, {start_seed + n_seeds})")
+        num_episodes = min(num_episodes, n_seeds)
 
     tracker = LatentStateTracker()
 
@@ -151,6 +177,10 @@ def run_latent_policy(
     try:
         for ep in range(num_episodes):
             tracker.reset()
+            episode_rng = None
+            if use_sequential_seeds:
+                vec_env.seed(start_seed + ep)
+                episode_rng = random.Random(start_seed + ep)
             obs = vec_env.reset()
             done = False
             step = 0
@@ -163,15 +193,27 @@ def run_latent_policy(
             while not done and step < 10000:
                 if not tracking_started and step >= start_tracking_step:
                     tracking_started = True
-
-                encoder_input = prepare_encoder_input(obs).to(device)
+                # print(obs)
+                # print(type(obs))
+                # print(obs.shape)
+                obs_to_enc = obs.copy()
+                if sqrl_size != 0:
+                    if episode_rng is not None:
+                        sqrlx = episode_rng.randint(0, 84 - sqrl_size)
+                        sqrly = episode_rng.randint(0, 84 - sqrl_size)
+                    else:
+                        sqrlx = random.randint(0, 84 - sqrl_size)
+                        sqrly = random.randint(0, 84 - sqrl_size)
+                    obs_to_enc[0, 0, sqrlx:sqrlx+sqrl_size, sqrly:sqrly+sqrl_size] = 100
+                encoder_input = prepare_encoder_input(obs_to_enc).to(device)
                 with torch.no_grad():
                     latent_vector = encoder(encoder_input)
 
-                visited_actions = tracker.get_visited_actions(latent_vector) if tracking_started else set()
+                visited_actions, action_count = tracker.get_visited_actions(latent_vector) if tracking_started else set()
 
-                action, _ = model.predict(obs, deterministic=False)
+                action, _ = model.predict(obs, deterministic=False)         # this needs to be True to compare how sqrl-size affects 
                 # print(action)
+                # pdb.set_trace()
                 best_action = int(action[0])
 
                 if tracking_started and best_action in visited_actions:
@@ -180,7 +222,7 @@ def run_latent_policy(
                         dist = model.policy.get_distribution(obs_tensor)
                         action_probs = dist.distribution.probs
                         # print(action_probs)
-                    action_to_take = select_next_best_action(action_probs, visited_actions)
+                    action_to_take = select_next_best_action(action_probs, visited_actions, action_count)
                     ep_next_best += 1
 
                     # latent_key = tracker.get_latent_key(latent_vector)
@@ -202,11 +244,10 @@ def run_latent_policy(
                 ep_reward += float(rewards[0])
                 step += 1
 
-                if render:
-                    # VecTransposeImage already provides image-aligned observation;
-                    # relying on vec_env.render may be slow but is optional.
+                if render and sqrl_size != 0:
+                    maybe_render(vec_env, delay=0.2, scale=8, squirrel_xy=(sqrlx, sqrly), sqrl_size=sqrl_size)
+                elif render:
                     maybe_render(vec_env, delay=0.2, scale=8)
-
             episode_rewards.append(ep_reward)
             total_next_best_actions += ep_next_best
             print(f"Episode {ep + 1} finished: reward={ep_reward:.2f}, steps={step}, "
@@ -238,18 +279,20 @@ def main():
         default=str(BASE_DIR / "encoder_model_grayscale.pth")
     )
     parser.add_argument("--episodes", type=int, default=5)
+    parser.add_argument("--sqrl-size", type=int, default=0)
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--start-tracking-step", type=int, default=0)
     parser.add_argument("--start-seed", type=int, default=0,
                         help="Starting seed value for evaluation (default: 0)")
-    parser.add_argument("--n-seeds", type=int, default=1000,
-                        help="Number of seeds in the range [start_seed, start_seed + n_seeds) (default: 1000)")
+    parser.add_argument("--n-seeds", type=int, default=None,
+                        help="If set, iterate seeds in [start_seed, start_seed + n_seeds); else sample random seed per episode")
     args = parser.parse_args()
 
     run_latent_policy(
         policy_path=args.policy,
         encoder_path=args.encoder,
         num_episodes=args.episodes,
+        sqrl_size=args.sqrl_size,
         render=args.render,
         start_tracking_step=args.start_tracking_step,
         start_seed=args.start_seed,

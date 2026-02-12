@@ -1,0 +1,29 @@
+[project]
+name = "puzzlegen"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "devanshroyal-7", email = "jdevansh2000@gmail.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "networkx",
+    "scikit-learn",
+    "gymnasium",
+    "imageio",
+    "imageio-ffmpeg",
+    "opencv-python",
+]
+
+[tool.uv]
+package = true
+
+[tool.uv.build-backend]
+module-name = "puzzlegen"
+module-root = "."
+
+[build-system]
+requires = ["uv_build>=0.9.21,<0.10.0"]
+build-backend = "uv_build"

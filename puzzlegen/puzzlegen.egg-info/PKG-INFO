@@ -1,0 +1,21 @@
+Metadata-Version: 2.4
+Name: puzzlegen
+Version: 0.1
+Summary: Procedurally generated puzzle environments with a gym interface.
+Home-page: https://github.com/martius-lab/puzzlegen
+Author: Marco Bagatella
+Author-email: mbagatella@tue.mpg.de
+License: MIT
+Requires-Dist: numpy
+Requires-Dist: networkx
+Requires-Dist: scikit-learn
+Requires-Dist: gymnasium
+Requires-Dist: imageio
+Requires-Dist: imageio-ffmpeg
+Requires-Dist: opencv-python
+Dynamic: author
+Dynamic: author-email
+Dynamic: home-page
+Dynamic: license
+Dynamic: requires-dist
+Dynamic: summary

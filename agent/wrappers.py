@@ -46,11 +46,12 @@ class FixedSeedSampler(gym.Wrapper):
         self.current_seed = None
 
     def reset(self, **kwargs):
-        # Pick a random seed from our training set
-        seed = int(np.random.choice(self.seeds))
+        seed = kwargs.pop('seed', None)
+        if seed is None:
+            seed = int(np.random.choice(self.seeds))
+        else:
+            seed = int(seed)
         self.current_seed = seed
-        # Remove seed from kwargs if present to avoid duplicate argument error
-        kwargs.pop('seed', None)
         obs, info = self.env.reset(seed=seed, **kwargs)
         info = dict(info)  # Ensure mutable
         info['seed'] = seed
@@ -61,6 +62,31 @@ class FixedSeedSampler(gym.Wrapper):
         info = dict(info)  # Ensure mutable
         info['seed'] = self.current_seed
         return obs, reward, terminated, truncated, info
+
+
+class UnboundedSeedWrapper(gym.Wrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        self.current_seed = None
+
+    def reset(self, **kwargs):
+        seed = kwargs.pop('seed', None)
+        if seed is None:
+            seed = int(np.random.randint(0, 2**31))
+        else:
+            seed = int(seed)
+        self.current_seed = seed
+        obs, info = self.env.reset(seed=seed, **kwargs)
+        info = dict(info)
+        info['seed'] = seed
+        return obs, info
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        info = dict(info)
+        info['seed'] = self.current_seed
+        return obs, reward, terminated, truncated, info
+
 
 class TimePenaltyWrapper(gym.Wrapper):
     """
@@ -94,22 +120,19 @@ class TimePenaltyWrapper(gym.Wrapper):
         return obs, reward, terminated, truncated, info
 
 def make_iceslider_env(
-    rank: int, 
-    n_seeds: int = 1000,
+    rank: int,
+    n_seeds: int | None = 1000,
     start_seed: int = 0,
-    max_steps: int = 64,  # <-- NEW: Hard limit
+    max_steps: int = 64,
     render_style: str = "grid_world"
 ):
     def _init():
         env = IceSlider(render_style=render_style)
-        
-        # 1. Force the strict time limit FIRST
         env = gym.wrappers.TimeLimit(env, max_episode_steps=max_steps)
-        
-        # 2. Constrain to specified seed range
-        env = FixedSeedSampler(env, n_seeds=n_seeds, start_seed=start_seed)
-        
-        # 3. Apply our custom reward logic (Step Penalty)
+        if n_seeds is not None:
+            env = FixedSeedSampler(env, n_seeds=n_seeds, start_seed=start_seed)
+        else:
+            env = UnboundedSeedWrapper(env)
         env = TimePenaltyWrapper(env)
         
         # 4. Visual Preprocessing (Image wrappers)
