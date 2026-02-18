@@ -26,6 +26,44 @@ from models import Encoder  # noqa: E402
 ACTION_NAMES = ["UP", "RIGHT", "LEFT", "DOWN", "NOOP"]
 NUM_ACTIONS = len(ACTION_NAMES)
 
+# 8-connected directions (dx, dy) for sqrl path: N, NE, E, SE, S, SW, W, NW
+SQRL_8_DIRECTIONS = [
+    (-1, -1), (-1, 0), (-1, 1),
+    (0, -1),           (0, 1),
+    (1, -1),  (1, 0),  (1, 1),
+]
+
+
+def sqrl_advance_directional(
+    x: int, y: int,
+    dx: int, dy: int,
+    remaining: int,
+    grid_size: int,
+    sqrl_size: int,
+    stride: int,
+    max_segment_length: int,
+    rng: random.Random,
+) -> Tuple[int, int, int, int, int]:
+    """
+    Advance sqrl along a directional path: move by stride in (dx, dy) for this step.
+    When remaining reaches 0, sample a new direction and a new length in [1, max_segment_length].
+    Returns (new_x, new_y, new_dx, new_dy, new_remaining).
+    """
+    max_xy = grid_size - sqrl_size
+    if max_xy <= 0:
+        return x, y, dx, dy, remaining
+
+    if remaining <= 0:
+        # Pick new direction (8-connected) and segment length
+        dx, dy = rng.choice(SQRL_8_DIRECTIONS)
+        remaining = rng.randint(1, max(1, max_segment_length))
+
+    # Move by stride in current direction, clamp to bounds
+    nx = max(0, min(max_xy, x + dx * stride))
+    ny = max(0, min(max_xy, y + dy * stride))
+    remaining -= 1
+    return nx, ny, dx, dy, remaining
+
 
 def get_action_name(action: int) -> str:
     if 0 <= action < len(ACTION_NAMES):
@@ -126,6 +164,8 @@ def run_latent_policy(
     policy_path: str = str(PROJECT_ROOT / "agent" / "ppo_iceslider_main.zip"),
     encoder_path: str = str(BASE_DIR / "encoder_model_grayscale.pth"),
     sqrl_size: int = 0,
+    sqrl_stride: int = 1,
+    sqrl_max_segment: int = 10,
     num_episodes: int = 5,
     render: bool = False,
     start_tracking_step: int = 0,
@@ -190,6 +230,19 @@ def run_latent_policy(
             
             print(f"\nEpisode {ep + 1}/{num_episodes}")
 
+            # Initialize sqrl at start of episode (directional path: direction + length, stride per step)
+            sqrlx, sqrly = 0, 0
+            sqrl_dx, sqrl_dy, sqrl_remaining = 0, 0, 0
+            if sqrl_size != 0:
+                grid_max = 84 - sqrl_size
+                if grid_max > 0:
+                    if episode_rng is not None:
+                        sqrlx = episode_rng.randint(0, grid_max)
+                        sqrly = episode_rng.randint(0, grid_max)
+                    else:
+                        sqrlx = random.randint(0, grid_max)
+                        sqrly = random.randint(0, grid_max)
+
             while not done and step < 10000:
                 if not tracking_started and step >= start_tracking_step:
                     tracking_started = True
@@ -198,12 +251,6 @@ def run_latent_policy(
                 # print(obs.shape)
                 obs_to_enc = obs.copy()
                 if sqrl_size != 0:
-                    if episode_rng is not None:
-                        sqrlx = episode_rng.randint(0, 84 - sqrl_size)
-                        sqrly = episode_rng.randint(0, 84 - sqrl_size)
-                    else:
-                        sqrlx = random.randint(0, 84 - sqrl_size)
-                        sqrly = random.randint(0, 84 - sqrl_size)
                     obs_to_enc[0, 0, sqrlx:sqrlx+sqrl_size, sqrly:sqrly+sqrl_size] = 100
                 encoder_input = prepare_encoder_input(obs_to_enc).to(device)
                 with torch.no_grad():
@@ -248,6 +295,15 @@ def run_latent_policy(
                     maybe_render(vec_env, delay=0.2, scale=8, squirrel_xy=(sqrlx, sqrly), sqrl_size=sqrl_size)
                 elif render:
                     maybe_render(vec_env, delay=0.2, scale=8)
+
+                # Advance sqrl along directional path (stride per step; new direction + length when segment ends)
+                if sqrl_size != 0:
+                    rng = episode_rng if episode_rng is not None else random
+                    sqrlx, sqrly, sqrl_dx, sqrl_dy, sqrl_remaining = sqrl_advance_directional(
+                        sqrlx, sqrly, sqrl_dx, sqrl_dy, sqrl_remaining,
+                        grid_size=84, sqrl_size=sqrl_size, stride=sqrl_stride,
+                        max_segment_length=sqrl_max_segment, rng=rng,
+                    )
             episode_rewards.append(ep_reward)
             total_next_best_actions += ep_next_best
             print(f"Episode {ep + 1} finished: reward={ep_reward:.2f}, steps={step}, "
@@ -280,6 +336,10 @@ def main():
     )
     parser.add_argument("--episodes", type=int, default=5)
     parser.add_argument("--sqrl-size", type=int, default=0)
+    parser.add_argument("--sqrl-stride", type=int, default=1,
+                        help="Grid cells to move per step in current direction (default: 1)")
+    parser.add_argument("--sqrl-max-segment", type=int, default=10,
+                        help="Max steps in one direction before picking a new direction (default: 10)")
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--start-tracking-step", type=int, default=0)
     parser.add_argument("--start-seed", type=int, default=0,
@@ -293,6 +353,8 @@ def main():
         encoder_path=args.encoder,
         num_episodes=args.episodes,
         sqrl_size=args.sqrl_size,
+        sqrl_stride=args.sqrl_stride,
+        sqrl_max_segment=args.sqrl_max_segment,
         render=args.render,
         start_tracking_step=args.start_tracking_step,
         start_seed=args.start_seed,

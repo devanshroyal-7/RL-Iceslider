@@ -14,16 +14,17 @@ BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
 from data import create_dataloader  # noqa: E402
+from losses import MarginLoss  # noqa: E402
 from models import Encoder, InverseModel, ForwardModel  # noqa: E402
-from losses import MarginLoss
+from visualize_data import visualize_dataset_pairs  # noqa: E402
 
 # -- Hyperparameters --
 LATENT_DIM = 16
 NUM_ACTIONS = 5
 LEARNING_RATE = 1e-4
 BATCH_SIZE = 64
-NUM_EPOCHS = 10
-EXPERIENCE_PATH = BASE_DIR / "iceslider_experience.pkl"
+NUM_EPOCHS = 25
+EXPERIENCE_PATH = BASE_DIR / "iceslider_sqrl_experience.pkl"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 def train(
@@ -42,6 +43,9 @@ def train(
     
     # 2. Create DataLoader
     dataloader = create_dataloader(experience_path=experience_path, batch_size=batch_size)
+
+    # 2b. Visualize first 15 (s_t, s_t+1) pairs (temporary plot, 1s per frame, then close)
+    visualize_dataset_pairs(experience_path, num_pairs=15, delay_seconds=1.0)
 
     # 3. Define Loss and Optimizer
     params_to_optimize = list(encoder.parameters()) + list(inverse_model.parameters()) + list(forward_model.parameters())
@@ -85,8 +89,10 @@ def train(
     # 5. Save the trained models
     encoder_path = BASE_DIR / "encoder_model_grayscale.pth"
     inverse_path = BASE_DIR / "inverse_model_grayscale.pth"
+    forward_path = BASE_DIR / "forward_model_grayscale.pth"
     torch.save(encoder.state_dict(), encoder_path)
     torch.save(inverse_model.state_dict(), inverse_path)
+    torch.save(forward_model.state_dict(), forward_path)
     print("Training complete. Models saved.")
 
 
