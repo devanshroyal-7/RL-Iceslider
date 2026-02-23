@@ -8,7 +8,7 @@ class LatentStateTracker:
         self.visited_states= np.empty((0, 16))
         self.action_table: dict[int, set[int]] = {}
         self.action_count: dict[int, list[int]] = {}
-        self.distance_threshold = 0.1
+        self.distance_threshold = 0.3
         self.state_count: dict[int, int] = dict()
     
     def get_visited_actions(self, latent_vector: torch.Tensor) -> Set[int]:

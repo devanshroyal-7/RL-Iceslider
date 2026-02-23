@@ -23,7 +23,7 @@ LATENT_DIM = 16
 NUM_ACTIONS = 5
 LEARNING_RATE = 1e-4
 BATCH_SIZE = 64
-NUM_EPOCHS = 25
+NUM_EPOCHS = 20
 EXPERIENCE_PATH = BASE_DIR / "iceslider_sqrl_experience.pkl"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -71,7 +71,7 @@ def train(
 
             loss_inverse = criterion_inverse(predicted_action_logits, a_t)
             loss_forward = criterion_forward(predicted_latent_state, z_t1)
-            loss_margin = criterion_margin(z_t, z_t1)
+            loss_margin = criterion_margin(z_t, z_t1, a_t)
 
             loss = loss_inverse + loss_forward + loss_margin
 

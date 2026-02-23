@@ -85,6 +85,8 @@ MAX_STEPS_PER_EPISODE = 15
 DEFAULT_SQRL_SIZE = 5
 DEFAULT_SQRL_STRIDE = 1
 DEFAULT_SQRL_MAX_SEGMENT = 10
+DEFAULT_NOOP_INTERVAL = 5  # Force NOOP every N steps (0 to disable)
+NOOP_ACTION = 4
 
 
 def make_collection_env(max_steps: int):
@@ -116,11 +118,18 @@ def generate_sqrl_experience(
     output_path: Union[Path, str] = OUTPUT_PATH,
     policy_path: Union[Path, str] = POLICY_PATH,
     start_seed: int = 0,
+    noop_interval: int = DEFAULT_NOOP_INTERVAL,
 ):
     """
     Collect (s_t, s_t1, a_t) with a path-following sqrl overlaid.
     Sqrl follows directional segments: picks a direction and a length, moves by
     stride each step in that direction, then picks a new direction and length.
+
+    Every `noop_interval` steps (if > 0), the policy action is overridden with
+    NOOP. The game state does not change on these steps, but the sqrl still
+    advances, producing (s_t, s_t1, NOOP) pairs where the only difference is
+    the sqrl position. This trains the encoder to be sqrl-invariant.
+    Set noop_interval=0 to disable.
     """
     print(f"Using device: {DEVICE}")
     policy_path = Path(policy_path)
@@ -134,7 +143,8 @@ def generate_sqrl_experience(
     env = make_vec_env(max_steps_per_episode)
     experience_buffer = []
 
-    print(f"Collecting experience with path-following sqrl (size={sqrl_size}, stride={sqrl_stride}, max_segment={sqrl_max_segment})")
+    noop_info = f", noop_interval={noop_interval}" if noop_interval > 0 else ", noop_interval=disabled"
+    print(f"Collecting experience with path-following sqrl (size={sqrl_size}, stride={sqrl_stride}, max_segment={sqrl_max_segment}{noop_info})")
     print(f"Episodes: {num_episodes}, max steps/episode: {max_steps_per_episode}")
 
     for episode in tqdm(range(num_episodes), desc="Episodes"):
@@ -156,10 +166,13 @@ def generate_sqrl_experience(
         state_frame = extract_frame(obs)
 
         while not done and step < max_steps_per_episode:
-            action, _ = model.predict(obs, deterministic=True)
-            action_int = int(action[0])
+            if noop_interval > 0 and step % noop_interval == 0:
+                action_int = NOOP_ACTION
+            else:
+                action, _ = model.predict(obs, deterministic=True)
+                action_int = int(action[0])
 
-            next_obs, reward, dones, infos = env.step(action)
+            next_obs, reward, dones, infos = env.step([action_int])
             done = bool(dones[0])
             next_state_frame = extract_frame(next_obs)
 
@@ -207,6 +220,8 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str, default=str(OUTPUT_PATH))
     parser.add_argument("--policy", type=str, default=str(POLICY_PATH))
     parser.add_argument("--start-seed", type=int, default=0)
+    parser.add_argument("--noop-interval", type=int, default=DEFAULT_NOOP_INTERVAL,
+                        help="Force NOOP every N steps to generate sqrl-invariance training signal (0 to disable)")
     args = parser.parse_args()
 
     generate_sqrl_experience(
@@ -218,4 +233,5 @@ if __name__ == "__main__":
         output_path=args.output,
         policy_path=args.policy,
         start_seed=args.start_seed,
+        noop_interval=args.noop_interval,
     )
